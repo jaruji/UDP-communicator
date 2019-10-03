@@ -23,19 +23,48 @@ SOCKET createSocket(SOCKET s){
     return s;
 }
 
+void closeSocket(SOCKET s){
+    closesocket(s);
+    WSACleanup();
+}
+
 void server(int port){                                                                                //server side code, listening on specified port number
     initializeWinsock();
     SOCKET s = createSocket(s);
+    struct sockaddr_in server;
+    server.sin_family = AF_INET;
+    server.sin_port = htons(port);
+    struct sockaddr_in client;
+    closeSocket(s);
 }
 
 void client(char *ip, int port){
     initializeWinsock();
     SOCKET s = createSocket(s);
     printf("Sending message to port %d, ip %s", port, ip);
+    closeSocket(s);
+}
+
+void copyFile(char *path, char *buffer, size_t n){
+    FILE *f;
+    f = fopen(path,"wb");
+    fwrite(buffer, 1, n, f);
+    fclose(f);
+}
+
+char *openFile(char *path) {        //funguje to pog
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    char buffer[250000];
+    n = fread(buffer, 1, sizeof(buffer), f);
+    fclose(f);
+    copyFile("img/test.png", buffer, n);
 }
 
 int main(){
     char mode;
+    openFile("img/Untitled.png");
+    /*
     printf("Select mode by typing one of the following letters: SEND(s) | RECIEVE(r) | EXIT(e)\n");      //file samostatne?
     char *ip = malloc(iplen * sizeof(char));                                                        //ip address
     int port;                                                                                             //port
@@ -59,10 +88,11 @@ int main(){
             break;
         case 'e':
             printf("Exiting...");
+            exit(EXIT_SUCCESS);
             break;
         default:
             printf("Wrong input, exiting...\n");
             break;
     }
-    return 0;
+    return 0;*/
 }
