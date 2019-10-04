@@ -1,13 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <winsock2.h>
 
 #define iplen 15
 #define HEAD ?
-#define BUFFLEN 250000
+#define BUFFLEN 2000000 //for 2MB file
+#define DEFAULTSIZE 10
+
 /*
-struct header{
+typedef struct header{
     char buffer[BUFFLEN];            //payload
     char flag;                       //custom flag - S to syn, A to ack, E to end, K to keep alive
     int size;                        //size of fragment that is being sent(in bytes) - without header size
@@ -16,19 +19,33 @@ struct header{
 }HEADER;
 */
 
+//######################################################################################
+//global variables here
+int fragmentCount;                  //number of fragments
+int fragmentSize = DEFAULTSIZE;     //maximum size of one fragment
+//######################################################################################
+
+
+typedef struct fragment{
+    char payload[BUFFLEN];
+}FRAGMENT;
+
+
 void help(){
     printf("Made by Juraj Bedej (C)\n");
     printf("Assignment for PKS\n");
     printf("Type :exit to exit the interactive console\n");
     printf("Type :file <filepath> to send a file\n");
+    printf("Type :size to choose fragment size (default is 10b)\n");
     //printf("");
 }
+
 
 void initializeWinsock(){
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2,2),&wsa) != 0)                                  //initializing winsock
     {
-        printf("Error: 'Failed to initialzie winsock'");
+        printf("Error: 'Failed to initialize winsock'");
         exit(EXIT_FAILURE);
     }
     printf("Winsock initialized\n");
@@ -50,6 +67,46 @@ void closeSocket(SOCKET s){                                                     
     WSACleanup();
 }
 
+void timeout(SOCKET socket){
+    int timer;
+    fd_set fdset;
+    struct timeval time;
+    FD_ZERO(&fdset);
+    FD_SET(socket, &fdset);
+    time.tv_sec = 60;
+    time.tv_usec = 0;
+    timer = select(socket, &fdset, NULL, NULL, &time);
+    if(timer == 0){
+        printf("Connection timed out\n");
+        exit(EXIT_SUCCESS);
+    }
+}
+
+
+FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
+    int i, j, curr = 0;
+    FRAGMENT *str = malloc(fragmentCount* sizeof(FRAGMENT));
+    memset(str, 0, sizeof(str));
+    for(i = 0; i < fragmentCount; i++){
+        for(j = 0; j < fragmentSize; j++){
+            str[i].payload[j] = msg[curr];
+            curr++;
+        }
+        str[i].payload[curr] = '\0';
+    }
+    for(i = 0; i < fragmentCount; i++){
+        printf("\nFragment number %d: %s", i + 1, str[i].payload);
+    }
+    return str;
+}
+
+
+int count(int len){                                                                                  //count how many fragments will the message be split into
+    double x = (double)len / (double)fragmentSize;
+    printf("Message will be split into %d fragments", (int)ceil(x));
+    return (int)ceil(x);
+}
+
 
 void server(int port){                                                                                //server side code, listening on specified port number until connection is established
     initializeWinsock();
@@ -68,8 +125,9 @@ void server(int port){                                                          
     printf("Socket binding successful\n");
     while(1){
         memset(msg, 0, strlen(msg));
-        fflush(stdout);
+        fflush(stdin);
         printf("...\n");
+        timeout(s);
         if(recv(s, msg, BUFFLEN,0) == SOCKET_ERROR){
             printf("Error: 'Socket error'");
             exit(EXIT_FAILURE);
@@ -92,21 +150,40 @@ void client(char *ip, int port){
     server.sin_addr.s_addr = inet_addr(ip);
 
     printf("Type ':exit' to exit the interactive console\n");
+    printf("Default fragment size is 10b\n");
     printf("Type your message:");
     while(1){                                                                                    //send messages to host in a cycle
-        //I need to establish connection first! Add it later(Handshake + keep alive if inactive, connection is ended by host not by client)
+        //I need to establish connection first! Add it later(Handshake + keep alive if inactive, connection is ended by client? by :exit probably)
+        //connection begins after sending first message/file
         printf("\n>>");
         fflush(stdin);                                                                           //flush the standart input
         gets(msg);
-        if(strcmp(msg, ":exit") == 0){
+        if(strcmp(msg, ":exit") == 0){                                                          //exit the console
             printf("Exiting...");
             break;
         }
-        else if(strcmp(msg, ":help") == 0) {
+        else if(strcmp(msg, ":help") == 0) {                                                    //help menu
             help();
             continue;
         }
+        else if(strcmp(msg, ":size") == 0) {                                                     //choose the maximum size of one fragment
+            printf("Select fragment size in b:  ");
+            scanf("%d", &fragmentSize);
+            printf("Fragment size is %d b", fragmentSize);
+            continue;
+        }
+        else if(strcmp(msg, ":file") == 0){
+            fflush(stdin);
+            printf("Sending a file will be implemented here\n");
+            continue;
+        }
+        else if(strcmp(msg, ":error") == 0){
+            printf("Error msg will be simulated here\n");
+        }
         printf("Message: '%s'\n", msg);
+        //##################################
+        fragmentCount = count(strlen(msg));
+        fragment(msg);
         if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR){
             printf("Error: 'socket error'");
             exit(EXIT_FAILURE);
@@ -150,7 +227,6 @@ int main(){
             printf("Choose target IP address: ");
             memset(ip, 0, iplen);
             scanf("%s", ip);
-            printf("Target IP address is: %s\n", ip);
             printf("Choose target port: ");
             scanf("%d", &port);
             client(ip, port);
