@@ -3,23 +3,13 @@
 #include <string.h>
 #include <math.h>
 #include <winsock2.h>
+#include <pthread.h>
 
 #define iplen 15
-#define HEAD 15
+#define HEAD 9
 #define BUFFLEN 2000000 //for 2MB file
 #define DEFAULTSIZE 10
-#define MAXFRAGMENT 65527 - HEAD
-
-/*
-typedef struct header{
-    char buffer[BUFFLEN];            //payload
-    char flag;                       //custom flag - S to syn, A to ack, E to end, K to keep alive
-    short window;                    //size of fragment that is being sent(in bytes) - without header size
-    short checksum;                  //checksum to check for transfer errors
-    int number;                      //number of packet
-    int count;                       //number of fragments
-}HEADER;
-*/
+#define MAXFRAGMENT 1500 - 20 - 8 - HEAD
 
 //######################################################################################
 //global variables here
@@ -29,12 +19,12 @@ int fragmentSize = DEFAULTSIZE;     //maximum size of one fragment
 
 
 typedef struct fragment{
-    char payload[BUFFLEN];
+    u_char payload[BUFFLEN];
 }FRAGMENT;
 
 
 typedef struct acceptedFragment{
-    char payload[BUFFLEN];
+    u_char payload[BUFFLEN];
     int number;
 }ACCEPTED;
 
@@ -42,17 +32,15 @@ typedef struct acceptedFragment{
 void help(){
     printf("Made by Juraj Bedej (C)\n");
     printf("Assignment for PKS\n");
-    printf("Type :exit to exit the entire program\n");
+    printf("Type :exit to exit end communication\n");
     printf("Type :file to enter file send mode\n");
     printf("Type :size to choose fragment size (default is 10B)\n");
     printf("Type :error to simulate error in communication\n");
     printf("Type :clear to tidy your screen\n");
-    printf("Type :quit to initiate the end of communication\n");
 }
 
 
-void prompt(char *msg){
-
+int prompt(char *msg){
 }
 
 
@@ -114,13 +102,13 @@ void timeoutClient(SOCKET socket, int try){
             printf("Error: 'Connection failed'\n");
             exit(EXIT_FAILURE);
         }
-        printf("\nNo server response, resending fragments...\n");
+        printf("\nNo server response, trying again...\n");
         //TODO - implement resending of fragments here!
-        return timeoutClient(socket, try += 1);
+        return timeoutClient(socket, try += 1);                         //recursive call of function timeoutClient()
     }
 }
 
-/*
+
 void append(int index, u_char* array, int value, int size){
     int i;
     index += size - 1;
@@ -131,30 +119,40 @@ void append(int index, u_char* array, int value, int size){
 }
 
 
-char *addHeader(FRAGMENT fragment, int number, int count, short checksum, char flag, int window){
+u_char *addHeader(char *fragment, int number, short checksum, char flag, short window){
     int i, j = 0;
-    int len = strlen(fragment.payload + HEAD);
-    char *msg = malloc(len * sizeof(char));
+    int len = strlen(fragment) + HEAD;
+    u_char *msg = malloc(len * sizeof(u_char));
     append(0, msg, number, sizeof(number));
-    append(4, msg, count, sizeof(count));
-    append(8, msg, checksum, sizeof(checksum));
-    append(10, msg, window, sizeof(window));
-    append(14, msg, flag, sizeof(flag));
+    append(4, msg, checksum, sizeof(checksum));
+    append(6, msg, window, sizeof(window));
+    append(8, msg, flag, sizeof(flag));
+    //memcpy(msg, &number, sizeof(number));
+    //memcpy(&msg[sizeof(number)], &checksum, sizeof(checksum));
     for(i = HEAD; i < len; i++){
-        msg[i] = fragment.payload[j++];
+        msg[i] = fragment[j++];
     }
-    printf("TU JE AJ S HLAVICKOU: %s %d\n", msg, strlen(msg));
+    msg[i] = '\0';
     return msg;
-    //TODO - takes a fragment and add header, return fragment with added header
-    //TODO - files could have different header then messages, but not sure yet
 }
-*/
+
+
+void print(int num, u_char *msg, int len){
+    int i;
+    printf("\n %d. :", num);
+    for(i = 0; i < HEAD + len; i++){
+        printf(" %.2x ", msg[i]);
+    }
+    printf("\n");
+}
+
 
 FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
     int i, j, curr = 0;
     FRAGMENT *str = malloc(fragmentCount* sizeof(FRAGMENT));
     memset(str, 0, sizeof(str));
     for(i = 0; i < fragmentCount; i++){
+        //str[i].payload = malloc(fragmentSize * sizeof(u_char));
         for(j = 0; j < fragmentSize; j++){
             str[i].payload[j] = msg[curr];
             curr++;
@@ -162,8 +160,9 @@ FRAGMENT *fragment(char *msg){                                                  
         str[i].payload[curr] = '\0';
     }
     for(i = 0; i < fragmentCount; i++){
-        printf("\nFragment number %d: %s", i + 1, str[i].payload);
-        //addHeader(str[i], i + 1, fragmentCount, 10, 'X', fragmentSize);
+        //printf("\nFragment number %d: %s", i + 1, str[i].payload);
+        print(i + 1,addHeader(str[i].payload, i + 1, 1000, 'M', fragmentSize), strlen(str[i].payload));
+        //print(i + 1,str[i].payload);
     }
     return str;
 }
@@ -220,7 +219,7 @@ void handshakeClient(SOCKET s, struct sockaddr_in server){
         exit(EXIT_FAILURE);
     }
     system("cls");
-    printf("Connection established\n");
+    printf("Connection established with\n");
 }
 
 
@@ -250,18 +249,26 @@ void handleFlag(char Flag){
 }
 
 
-void keepAlive(){
-    //TODO - sends keepalive packet if timeout on client side equals 0 - probably multithreading?
+void *keepAlive(void *vargp){
+    while(1) {
+        Sleep(10000);
+        printf("K");
+    }
 }
 
 
-void checksum(){
-    //TODO - calculate the checksum value of packet sent as argument - CRC
+short checksum(){
+    //TODO - calculate the checksum value of packet sent as argument - probably CRC
 }
 
 
 int checkPacket(){
     //TODO - check checksum value, return 0 if faulty, else 1
+}
+
+
+void requestFragments(int *missing){
+    //TODO - if fragments arrive faulty, server sends a request for them to be resent
 }
 
 
@@ -284,7 +291,9 @@ void server(int port){                                                          
         printf("Error: 'Socket error'");
         exit(EXIT_FAILURE);
     }
-    handshakeServer(s, server, client);
+
+    handshakeServer(s, server, client);                                                                   //server waits for SYN, responds with ACK
+
     while(1){
         memset(msg, 0, strlen(msg));
         fflush(stdin);
@@ -309,6 +318,7 @@ void server(int port){                                                          
 void client(char *ip, int port){
     initializeWinsock();
     SOCKET s = createSocket(s);
+    pthread_t tID;
     char *msg = malloc(BUFFLEN * sizeof(char));
     char *filename = malloc(100 * sizeof(char));
 
@@ -317,11 +327,12 @@ void client(char *ip, int port){
     server.sin_port = htons(port);
     server.sin_addr.s_addr = inet_addr(ip);
 
-    handshakeClient(s, server);
+    handshakeClient(s, server);                                                                  //client sends SYN flag, waits for ACK
 
     printf("Type ':exit' to exit the interactive console\n");
     printf("Default fragment size is 10b\n");
     printf("Type your message:");
+    //pthread_create(&tID, NULL, keepAlive, NULL);
     while(1){                                                                                    //send messages to host in a cycle
         //I need to establish connection first! Add it later(Handshake + keep alive if inactive, connection is ended by client? by :exit probably)
         //connection begins after sending first message/file
@@ -337,12 +348,14 @@ void client(char *ip, int port){
             continue;
         }
         else if(strcmp(msg, ":size") == 0) {                                                     //choose the maximum size of one fragment
-            printf("Select fragment size in b:  ");
+            printf("Select fragment size in B:  ");
             scanf("%d", &fragmentSize);
             if(fragmentSize > MAXFRAGMENT){
                 fragmentSize = MAXFRAGMENT;
             }
-            printf("Fragment size is %d b", fragmentSize);
+            else if(fragmentSize < 1)
+                fragmentSize = 1;
+            printf("Fragment size is %d B", fragmentSize);
             continue;
         }
         else if(strcmp(msg, ":file") == 0){
@@ -357,7 +370,7 @@ void client(char *ip, int port){
         else if(strcmp(msg, ":error") == 0){
             printf("Error msg will be simulated here\n");
         }
-        else if(strcmp(msg, ":clear") == 0){
+        else if(strcmp(msg, ":clear") == 0) {
             system("cls");
             continue;
         }
@@ -371,12 +384,11 @@ void client(char *ip, int port){
             exit(EXIT_FAILURE);
         }
         memset(msg, 0, strlen(msg));
-        timeoutClient(s, 1); //it worked before, doesnt work anymore WTF? actually cursed programming
+        timeoutClient(s, 1);
         if(recv(s, msg, BUFFLEN,0) == SOCKET_ERROR){
             printf("Error: 'Socket error'");
             exit(EXIT_FAILURE);
         }
-
         printf("\nServer response: %s", msg);
         memset(msg, 0, strlen(msg));
         memset(filename, 0, strlen(filename));
@@ -388,7 +400,6 @@ void client(char *ip, int port){
 int main(){
     char mode;
     //openFile("img/Untitled.png");
-
     printf("Select mode by typing one of the following letters: SEND(s) | RECIEVE(r) | EXIT(e)\n");      //file samostatne?
     char *ip = malloc(iplen * sizeof(char));                                                        //ip address
     int port;                                                                                             //port
