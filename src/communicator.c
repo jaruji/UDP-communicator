@@ -10,15 +10,18 @@
 #define BUFFLEN 2000000 //for 2MB file
 #define DEFAULTSIZE 10
 #define MAXFRAGMENT 1500 - 20 - 8 - HEAD
+#define LIMIT 5
 
 //######################################################################################
 //global variables here
 int fragmentCount;                  //number of fragments
 int fragmentSize = DEFAULTSIZE;     //maximum size of one fragment
+int generator = 0xd175;             //generator polynome for CRC-16
 //######################################################################################
 
 
 typedef struct fragment{
+    int len;
     u_char payload[BUFFLEN];
 }FRAGMENT;
 
@@ -140,7 +143,7 @@ u_char *addHeader(char *fragment, int number, short checksum, char flag, short w
 void print(int num, u_char *msg, int len){
     int i;
     printf("\n %d. :", num);
-    for(i = 0; i < HEAD + len; i++){
+    for(i = 0; i < len; i++){
         printf(" %.2x ", msg[i]);
     }
     printf("\n");
@@ -158,13 +161,25 @@ FRAGMENT *fragment(char *msg){                                                  
             curr++;
         }
         str[i].payload[curr] = '\0';
+        str[i].len = HEAD + strlen(str[i].payload);
     }
     for(i = 0; i < fragmentCount; i++){
         //printf("\nFragment number %d: %s", i + 1, str[i].payload);
-        print(i + 1,addHeader(str[i].payload, i + 1, 1000, 'M', fragmentSize), strlen(str[i].payload));
+        print(i + 1,addHeader(str[i].payload, i + 1, 1000, 'M', fragmentSize), str[i].len);
         //print(i + 1,str[i].payload);
     }
     return str;
+}
+
+
+char *decodeMessage(u_char *pkt_data, int len){                 //extracts the data segment from fragment
+    int i, j = 0;
+    char *message = malloc((len - HEAD) * sizeof(char));
+    for(i = HEAD; i < len; i++){
+        message[j++] = pkt_data[i];
+    }
+    message[j] = '\0';
+    return message;
 }
 
 
@@ -202,24 +217,40 @@ char *openFile(char *path) {                            //open binary file and l
 }
 
 
+void handleFlag(char flag){
+    //TODO - chooses course of action depending on the flag of recieved packet
+    switch(flag){
+        case('S'):
+            printf("Recieved SYN\n");
+            break;
+        case('K'):
+            printf("\nRecieved KEEPALIVE\n");
+        case('A'):
+            printf("\nRecieved ACK\n");
+            break;
+    }
+}
+
+
 void handshakeClient(SOCKET s, struct sockaddr_in server){
     //TODO - client sends SYN, waits for ACK
-    char msg[HEAD];
-    strcpy(msg, "SYN");
-    msg[strlen(msg)] = '\0';
     //this message is for testing ^
-    if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
+    char msg[HEAD];
+    system("cls");
+    printf("Sending SYN\n");
+    if(sendto(s, addHeader("", 1, 0, 'S', 0), HEAD, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
         printf("Error: 'socket error'");
         exit(EXIT_FAILURE);
     }
-    memset(msg, 0, strlen(msg));
+    //memset(msg, 0, strlen(msg));
     timeoutClient(s, 1);
     if(recv(s, msg, HEAD,0) == SOCKET_ERROR){
         printf("Error: 'Socket error'");
         exit(EXIT_FAILURE);
     }
-    system("cls");
-    printf("Connection established with\n");
+    print(1, msg, HEAD);
+    handleFlag(msg[8]);
+    printf("Connection established\n");
 }
 
 
@@ -232,20 +263,16 @@ void handshakeServer(SOCKET s, struct sockaddr_in server, struct sockaddr_in cli
         printf("Error: 'Socket error'");
         exit(EXIT_FAILURE);
     }
-    printf("%s\n", msg);
+    system("cls");
+    handleFlag(msg[8]);
+    print(1, msg, HEAD);
+    printf("\nSending ACK\n");
     memset(msg, 0, strlen(msg));
-    strcpy(msg,"ACK");
-    if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+    if(sendto(s, addHeader("",2,0,'A',0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
         printf("Error: 'socket error'");
         exit(EXIT_FAILURE);
     }
-    system("cls");
     printf("Connection established\n");
-}
-
-
-void handleFlag(char Flag){
-    //TODO - chooses course of action depending on the flag of recieved packet
 }
 
 
@@ -257,13 +284,15 @@ void *keepAlive(void *vargp){
 }
 
 
-short checksum(){
+short checksum(u_char *fragment){
     //TODO - calculate the checksum value of packet sent as argument - probably CRC
+
 }
 
 
-int checkPacket(){
+int checkPacket(u_char *fragment){
     //TODO - check checksum value, return 0 if faulty, else 1
+
 }
 
 
@@ -330,7 +359,7 @@ void client(char *ip, int port){
     handshakeClient(s, server);                                                                  //client sends SYN flag, waits for ACK
 
     printf("Type ':exit' to exit the interactive console\n");
-    printf("Default fragment size is 10b\n");
+    printf("Default fragment size is 10B\n");
     printf("Type your message:");
     //pthread_create(&tID, NULL, keepAlive, NULL);
     while(1){                                                                                    //send messages to host in a cycle
@@ -377,7 +406,10 @@ void client(char *ip, int port){
         printf("Message: '%s'\n", msg);
         //##################################
         fragmentCount = count(strlen(msg));
-        fragment(msg);
+        FRAGMENT *fp;
+        fp = fragment(msg);
+        //addHeader(fp[i].payload, i + 1, 10000, 'M', fragmentSize)
+        //int i = 0;
         //##################################
         if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
             printf("Error: 'socket error'");
