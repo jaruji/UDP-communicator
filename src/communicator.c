@@ -22,12 +22,12 @@ int generator = 0xd175;             //generator polynome for CRC-16
 
 typedef struct fragment{
     int len;
-    u_char payload[BUFFLEN];
+    u_char *payload;
 }FRAGMENT;
 
 
 typedef struct acceptedFragment{
-    u_char payload[BUFFLEN];
+    u_char *payload;
     int number;
 }ACCEPTED;
 
@@ -153,6 +153,9 @@ void print(int num, u_char *msg, int len){
 FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
     int i, j, curr = 0;
     FRAGMENT *str = malloc(fragmentCount* sizeof(FRAGMENT));
+    for(i = 0; i < fragmentCount; i++){
+        str[i].payload = malloc(fragmentSize * sizeof(FRAGMENT));
+    }
     memset(str, 0, sizeof(str));
     for(i = 0; i < fragmentCount; i++){
         //str[i].payload = malloc(fragmentSize * sizeof(u_char));
@@ -169,6 +172,15 @@ FRAGMENT *fragment(char *msg){                                                  
         //print(i + 1,str[i].payload);
     }
     return str;
+}
+
+
+void myFree(FRAGMENT *str){
+    int i;
+    for(i = 0; i < fragmentCount; i++){
+        free(str[i].payload);
+    }
+    free(str);
 }
 
 
@@ -348,6 +360,7 @@ void client(char *ip, int port){
     initializeWinsock();
     SOCKET s = createSocket(s);
     pthread_t tID;
+    FRAGMENT *fp;
     char *msg = malloc(BUFFLEN * sizeof(char));
     char *filename = malloc(100 * sizeof(char));
 
@@ -406,7 +419,6 @@ void client(char *ip, int port){
         printf("Message: '%s'\n", msg);
         //##################################
         fragmentCount = count(strlen(msg));
-        FRAGMENT *fp;
         fp = fragment(msg);
         //addHeader(fp[i].payload, i + 1, 10000, 'M', fragmentSize)
         //int i = 0;
@@ -425,6 +437,7 @@ void client(char *ip, int port){
         memset(msg, 0, strlen(msg));
         memset(filename, 0, strlen(filename));
     }
+    myFree(fp);
     free(msg);
     closeSocket(s);
 }
