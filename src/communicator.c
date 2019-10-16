@@ -74,13 +74,13 @@ void closeSocket(SOCKET s){                                                     
 }
 
 
-void timeoutServer(SOCKET socket){                                                                    //function that times out the socket
+void timeoutServer(SOCKET socket){                                                                    //function that times out the socket if no keepalive or message received
     int timer;
     fd_set fdset;
     struct timeval time;
     FD_ZERO(&fdset);
     FD_SET(socket, &fdset);
-    time.tv_sec = 60;
+    time.tv_sec = 60;                                                                                  //timeout after 60 seconds
     time.tv_usec = 0;
     timer = select(socket, &fdset, NULL, NULL, &time);
     if(timer == 0){
@@ -130,8 +130,6 @@ u_char *addHeader(char *fragment, int number, short checksum, char flag, short w
     append(4, msg, checksum, sizeof(checksum));
     append(6, msg, window, sizeof(window));
     append(8, msg, flag, sizeof(flag));
-    //memcpy(msg, &number, sizeof(number));
-    //memcpy(&msg[sizeof(number)], &checksum, sizeof(checksum));
     for(i = HEAD; i < len; i++){
         msg[i] = fragment[j++];
     }
@@ -155,10 +153,10 @@ FRAGMENT *fragment(char *msg){                                                  
     FRAGMENT *str = malloc(fragmentCount* sizeof(FRAGMENT));
     for(i = 0; i < fragmentCount; i++){
         str[i].payload = malloc(fragmentSize * sizeof(FRAGMENT));
+        memset(str[i].payload, 0, fragmentSize);
     }
-    memset(str, 0, sizeof(str));
+    memset(str, 0, fragmentCount);
     for(i = 0; i < fragmentCount; i++){
-        //str[i].payload = malloc(fragmentSize * sizeof(u_char));
         for(j = 0; j < fragmentSize; j++){
             str[i].payload[j] = msg[curr];
             curr++;
@@ -167,9 +165,7 @@ FRAGMENT *fragment(char *msg){                                                  
         str[i].len = HEAD + strlen(str[i].payload);
     }
     for(i = 0; i < fragmentCount; i++){
-        //printf("\nFragment number %d: %s", i + 1, str[i].payload);
         print(i + 1,addHeader(str[i].payload, i + 1, 1000, 'M', fragmentSize), str[i].len);
-        //print(i + 1,str[i].payload);
     }
     return str;
 }
@@ -430,6 +426,7 @@ void client(char *ip, int port){
             else if(fragmentSize < 1)
                 fragmentSize = 1;
             printf("Fragment size is %d B", fragmentSize);
+            myFree(fp);
             //myFree(fp)
             //myRealloc();
             continue;
@@ -470,9 +467,11 @@ void client(char *ip, int port){
         printf("\nServer response: %s", msg);
         memset(msg, 0, strlen(msg));
         memset(filename, 0, strlen(filename));
+        myFree(fp);
     }
     myFree(fp);
     free(msg);
+    free(filename);
     closeSocket(s);
 }
 
