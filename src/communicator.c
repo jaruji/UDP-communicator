@@ -229,17 +229,24 @@ char *openFile(char *path) {                            //open binary file and l
 }
 
 
-void handleFlag(char flag){
+int handleFlag(char flag){
     //TODO - chooses course of action depending on the flag of recieved packet
     switch(flag){
         case('S'):
             printf("Recieved SYN\n");
-            break;
+            return 1;
         case('K'):
             printf("\nRecieved KEEPALIVE\n");
+            return 1;
         case('A'):
-            printf("\nRecieved ACK\n");
-            break;
+            printf("\nReceived ACK\n");
+            return 1;
+        case('L'):
+            printf("\nLast fragment recevied\n");
+            return 1;
+        case('E'):
+            printf("\nExiting communication\n");
+            return 0;
     }
 }
 
@@ -285,6 +292,23 @@ void handshakeServer(SOCKET s, struct sockaddr_in server, struct sockaddr_in cli
         exit(EXIT_FAILURE);
     }
     printf("Connection established\n");
+}
+
+
+void end(SOCKET s, struct sockaddr_in server){
+    u_char *msg = malloc(HEAD * sizeof(u_char));
+    if(sendto(s, addHeader("",1,0,'E',0), HEAD, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
+        printf("Error: 'socket error'");
+        exit(EXIT_FAILURE);
+    }
+    memset(msg, 0, HEAD);
+    timeoutClient(s, 1);
+    if(recv(s, msg, HEAD,0) == SOCKET_ERROR){
+        printf("Error: 'Socket error'");
+        exit(EXIT_FAILURE);
+    }
+    print(1, msg, HEAD);
+    free(msg);
 }
 
 
@@ -343,9 +367,16 @@ void server(int port){                                                          
             printf("Error: 'Socket error'");
             exit(EXIT_FAILURE);
         }
-
         printf("%s\n", msg);
-
+        if(!handleFlag(msg[8])) {                //If client initiated end of communication
+            print(1, msg, HEAD);
+            if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) ==
+                SOCKET_ERROR) {
+                printf("Error: 'socket error'");
+                exit(EXIT_FAILURE);
+            }
+            break;
+        }
         if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
             printf("Error: 'socket error'");
             exit(EXIT_FAILURE);
@@ -382,7 +413,8 @@ void client(char *ip, int port){
         fflush(stdin);                                                                           //flush the standart input
         gets(msg);
         if(strcmp(msg, ":exit") == 0){                                                          //exit the console
-            printf("Exiting...");
+            printf("Exiting communication\n");
+            end(s,server);
             break;
         }
         else if(strcmp(msg, ":help") == 0) {                                                    //help menu
@@ -398,6 +430,8 @@ void client(char *ip, int port){
             else if(fragmentSize < 1)
                 fragmentSize = 1;
             printf("Fragment size is %d B", fragmentSize);
+            //myFree(fp)
+            //myRealloc();
             continue;
         }
         else if(strcmp(msg, ":file") == 0){
@@ -444,34 +478,38 @@ void client(char *ip, int port){
 
 int main(){
     char mode;
-    //openFile("img/Untitled.png");
-    printf("Select mode by typing one of the following letters: SEND(s) | RECIEVE(r) | EXIT(e)\n");      //file samostatne?
     char *ip = malloc(iplen * sizeof(char));                                                        //ip address
-    int port;                                                                                             //port
-    scanf("%c", &mode);
-    switch(mode){                                                                                         //switch menu
-        case 's':
-            printf("Sending mode\n");
-            printf("Choose target IP address: ");
-            memset(ip, 0, iplen);
-            scanf("%s", ip);
-            printf("Choose target port: ");
-            scanf("%d", &port);
-            client(ip, port);
-            break;
-        case 'r':
-            printf("Receiving mode\n");
-            printf("Choose port to listen on: ");
-            scanf("%d", &port);
-            server(port);
-            break;
-        case 'e':
-            printf("Exiting...");
-            exit(EXIT_SUCCESS);
-            break;
-        default:
-            printf("Error: 'Wrong input, exiting...'\n");
-            break;
+    int port;
+    //openFile("img/Untitled.png");
+    while(1) {
+        memset(ip, 0, iplen);
+        printf("Select mode by typing one of the following letters: SEND(s) | RECIEVE(r) | EXIT(e)\n");      //file samostatne?
+        fflush(stdin);
+        scanf("%c", &mode);
+        switch (mode) {                                                                                         //switch menu
+            case 's':
+                printf("Sending mode\n");
+                printf("Choose target IP address: ");
+                memset(ip, 0, iplen);
+                scanf("%s", ip);
+                printf("Choose target port: ");
+                scanf("%d", &port);
+                client(ip, port);
+                break;
+            case 'r':
+                printf("Receiving mode\n");
+                printf("Choose port to listen on: ");
+                scanf("%d", &port);
+                server(port);
+                break;
+            case 'e':
+                printf("Exiting...");
+                exit(EXIT_SUCCESS);
+                break;
+            default:
+                printf("Error: 'Wrong input, exiting...'\n");
+                break;
+        }
     }
     return 0;
 }
