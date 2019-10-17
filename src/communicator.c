@@ -148,14 +148,26 @@ void print(int num, u_char *msg, int len){
 }
 
 
+void myFree(FRAGMENT *fp){
+    int i;
+    for(i = 0; i < fragmentCount; i++){
+        free(fp[i].payload);
+    }
+    free(fp);
+    return;
+}
+
+
 FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
     int i, j, curr = 0;
+    printf("\nBREAKPOINT 1\n");
     FRAGMENT *str = malloc(fragmentCount* sizeof(FRAGMENT));
     for(i = 0; i < fragmentCount; i++){
         str[i].payload = malloc(fragmentSize * sizeof(FRAGMENT));
         memset(str[i].payload, 0, fragmentSize);
     }
-    memset(str, 0, fragmentCount);
+    printf("\nBREAKPOINT 2\n");
+    printf("\nBREAKPOINT 3\n");
     for(i = 0; i < fragmentCount; i++){
         for(j = 0; j < fragmentSize; j++){
             str[i].payload[j] = msg[curr];
@@ -164,19 +176,12 @@ FRAGMENT *fragment(char *msg){                                                  
         str[i].payload[curr] = '\0';
         str[i].len = HEAD + strlen(str[i].payload);
     }
+    printf("\nBREAKPOINT 4\n");
     for(i = 0; i < fragmentCount; i++){
         print(i + 1,addHeader(str[i].payload, i + 1, 1000, 'M', fragmentSize), str[i].len);
     }
+    printf("\nBREAKPOINT 5\n");
     return str;
-}
-
-
-void myFree(FRAGMENT *str){
-    int i;
-    for(i = 0; i < fragmentCount; i++){
-        free(str[i].payload);
-    }
-    free(str);
 }
 
 
@@ -386,8 +391,8 @@ void server(int port){                                                          
 void client(char *ip, int port){
     initializeWinsock();
     SOCKET s = createSocket(s);
-    pthread_t tID;
-    FRAGMENT *fp;
+    pthread_t tID;                                                                              //Posix thread for keepalive prob.
+    FRAGMENT *fp = NULL;
     char *msg = malloc(BUFFLEN * sizeof(char));
     char *filename = malloc(100 * sizeof(char));
 
@@ -426,9 +431,8 @@ void client(char *ip, int port){
             else if(fragmentSize < 1)
                 fragmentSize = 1;
             printf("Fragment size is %d B", fragmentSize);
-            myFree(fp);
-            //myFree(fp)
-            //myRealloc();
+            if(fp != NULL)
+                myFree(fp);
             continue;
         }
         else if(strcmp(msg, ":file") == 0){
@@ -468,6 +472,7 @@ void client(char *ip, int port){
         memset(msg, 0, strlen(msg));
         memset(filename, 0, strlen(filename));
         myFree(fp);
+        fp = NULL;
     }
     myFree(fp);
     free(msg);
