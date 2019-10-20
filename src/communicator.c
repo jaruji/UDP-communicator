@@ -11,7 +11,7 @@
 #define DEFAULTSIZE 10
 #define MAXFRAGMENT 1472 - HEAD
 #define NAMESIZE 100
-#define LIMIT 5
+#define LIMIT 10
 
 
 typedef struct fragment{
@@ -160,6 +160,17 @@ int myFree(FRAGMENT *p){
     }
     free(p);
     return 1;
+}
+
+
+void myFree2(ACCEPTED *p, int len){
+    if(p == NULL)
+        return;
+    int i;
+    for(i = 0; i < len; i++){
+        free(p[i].payload);
+    }
+    free(p);
 }
 
 
@@ -374,9 +385,21 @@ int comp (const void * a, const void * b)
     return x->seq - y->seq;
 }
 
-char* orderFragments(int len, ACCEPTED *acceptedFragments){
+ACCEPTED* order(ACCEPTED *str, int len){
+    qsort(str, len, sizeof(ACCEPTED), comp);
+    return str;
+}
+
+
+void reconstruct(ACCEPTED *str, int len){
+    str = order(str, len);
+    char *msg = malloc(2000000 * sizeof(char));
     int i;
-    qsort(acceptedFragments, len, sizeof(ACCEPTED), comp);
+    for(i = 0; i < len; i++) {
+        strcat(msg, decodeMessage(str[i].payload, str[i].len));
+    }
+    printf("\nFinal message: %s\n", msg);
+    free(msg);
 }
 
 
@@ -384,6 +407,7 @@ void server(int port){                                                          
     initializeWinsock();
     SOCKET s = createSocket(s);
     u_char *msg = malloc(MAXFRAGMENT * sizeof(u_char));
+    ACCEPTED *accepted = NULL;
 
     struct sockaddr_in server;
     server.sin_family = AF_INET;
@@ -400,22 +424,30 @@ void server(int port){                                                          
         exit(EXIT_FAILURE);
     }
 
-    handshakeServer(s, server, client);                                                                   //server waits for SYN, responds with ACK
+    handshakeServer(s, server, client);                                                                   //server waits for SYN, responds with ACK - connection is established
 
     while(1){
         memset(msg, 0, MAXFRAGMENT);
-        //fflush(stdin);
-        int recvb = 0, i = 1, state = 1;
+        int recvb = 0, i = 0, state = 1;
+        accepted = malloc(sizeof(ACCEPTED));
         while(state) {
+            accepted = realloc(accepted, (i + 1) * sizeof(ACCEPTED));
+            accepted[i].payload = calloc(MAXFRAGMENT, sizeof(u_char));
             timeoutServer(s);
-            if(recvfrom(s, msg, MAXFRAGMENT, 0, (struct sockaddr *) &client, &len) == SOCKET_ERROR) {
+            if(recvfrom(s, accepted[i].payload, MAXFRAGMENT, 0, (struct sockaddr *) &client, &len) == SOCKET_ERROR) {
                 printf("Error: 'Socket error'");
                 exit(EXIT_FAILURE);
             }
-            recvb = toShort(msg, 6) + HEAD;                     //size of received fragment equals window size + header size
-            print(i, msg, recvb);
-            switch(handleFlag(msg[8])){
-                case 2:
+            recvb = toShort(accepted[i].payload, 6) + HEAD;     //size of received fragment equals window size + header size
+            accepted[i].payload = realloc(accepted[i].payload, recvb * sizeof(u_char));
+            accepted[i].seq = toInt(accepted[i].payload, 0);
+            accepted[i].len = recvb;
+            print(accepted[i].seq, accepted[i].payload, accepted[i].len);
+            switch(handleFlag(accepted[i].payload[8])){
+                case 1:                                               //end of file/message transfer
+                    state = 0;
+                    break;
+                case 2:                                               //end of communication
                     print(1, msg, HEAD);
                     if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                         printf("Error: 'socket error'");
@@ -424,9 +456,6 @@ void server(int port){                                                          
                     free(msg);
                     closeSocket(s);
                     return;
-                case 1:
-                    state = 0;
-                    break;
             }
             memset(msg, 0, recvb);
             if (sendto(s, addHeader("", i, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
@@ -435,6 +464,8 @@ void server(int port){                                                          
             }
             i++;
         }
+        reconstruct(accepted, i);
+        myFree2(accepted, i);
     }
 }
 
