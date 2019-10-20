@@ -207,10 +207,10 @@ int verify(u_char *fragment, short checksum){
 }
 
 
-FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
+FRAGMENT *fragment(char *msg, int len){                                                                      //fragmenting the message
     int i, j, curr = 0;
     char flag = 'M';
-    fragmentCount = count(strlen(msg));
+    fragmentCount = count(len);
     FRAGMENT *str = malloc(fragmentCount * sizeof(FRAGMENT));
     for(i = 0; i < fragmentCount; i++){
         str[i].payload = calloc(fragmentSize + 1, sizeof(u_char));
@@ -255,22 +255,26 @@ void copyFile(char *path, char *buffer, size_t n){      //copy the contents of b
 }
 
 
-char *openFile(char *path) {                            //open binary file and load its content into a buffer(max 2MB)
+char *openFile(char *path, int *len) {                            //open binary file and load its content into a buffer(max 2MB)
     //TODO - bug, file not transfering correctly, worked in previous versions of program
-    //TODO - size n is correct, but buffer is only 8b? what
+    //TODO - size n is correct, but buffer is only 8B? what
     size_t n;
     FILE *f = fopen(path, "rb");
     if(f == NULL){
         printf("Error: 'file not found'");
         exit(EXIT_FAILURE);
     }
-    char buffer[BUFFLEN];
-    char *p = buffer;
-    n = fread(buffer, 1, sizeof(buffer), f);
-    printf("\nSize of file is %d b\n", n);
+    fseek(f, 0L, SEEK_END);
+    n = ftell(f);
+    *len = n;
+    rewind(f);
+    u_char *buffer = malloc(n * sizeof(u_char));
+    fread(buffer, n + 1, 1, f);
+    printf("\nSize of file is %d B\n", n);
     fclose(f);
-    copyFile("test.png", buffer, n);
-    return p;
+    //print(99, buffer, n);
+    //copyFile("LANtransfer.png", buffer, n);
+    return buffer;
 }
 
 
@@ -392,6 +396,7 @@ int comp (const void * a, const void * b)
     ACCEPTED *y = (ACCEPTED*) b;
     return x->seq - y->seq;
 }
+
 
 ACCEPTED* order(ACCEPTED *str, int len){
     qsort(str, len, sizeof(ACCEPTED), comp);
@@ -519,8 +524,9 @@ void client(char *ip, int port){
     SOCKET s = createSocket(s);
     //pthread_t tID;                                                                              //Posix thread for keepalive prob.
     FRAGMENT *p = NULL;
-    char *msg = malloc(BUFFLEN * sizeof(char));
+    u_char *msg = malloc(BUFFLEN * sizeof(u_char));
     char *filename = malloc(NAMESIZE * sizeof(char));
+    int len;
 
     struct sockaddr_in server;                                                                   //server sockaddr(for client connection to specified host)
     server.sin_family = AF_INET;
@@ -540,6 +546,7 @@ void client(char *ip, int port){
         printf("\n>>>");
         fflush(stdin);                                                                           //flush the standart input
         gets(msg);
+        len = strlen(msg);
         if(strcmp(msg, ":exit") == 0){                                                          //exit the console
             printf("Exiting communication\n");
             end(s,server);
@@ -562,12 +569,13 @@ void client(char *ip, int port){
         }
         else if(strcmp(msg, ":file") == 0){
             //TODO- file sending implementation
-            memset(msg, 0, strlen(msg));
+            memset(msg, 0, BUFFLEN);
             printf("Type path to file: ");
             fflush(stdin);
             gets(filename);
             printf("Sending file : %s\n", filename);
-            msg = openFile(filename);
+            printf("Full path: \n");
+            msg = openFile(filename, &len);
         }
         else if(strcmp(msg, ":error") == 0){
             printf("Error msg will be simulated here\n");
@@ -578,7 +586,7 @@ void client(char *ip, int port){
         }
         printf("Your message: '%s'\n", msg);
         //##################################
-        p = fragment(msg);
+        p = fragment(msg, len);
         //##################################
         int i = 0, j, recvb;
         while(i < fragmentCount) {
