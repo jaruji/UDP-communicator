@@ -411,11 +411,30 @@ void reconstructMessage(ACCEPTED *str, int len){
 }
 
 
+char convertFlag(char a){
+    if(a == 'A')
+        return '1';
+    else
+        return '0';
+}
+
+
+u_char *response(ACCEPTED *str, int prev, int len){
+    u_char *msg = malloc((len - prev) * sizeof(u_char));
+    int i, j = 0;
+    for(i = prev; i < len; i++){
+        msg[j++] = convertFlag(str[i].payload[8]);
+    }
+    return addHeader(msg, 0, 0, 'R', len - prev);
+}
+
+
 void server(int port){                                                                                //server side code, listening on specified port number until connection is established
     initializeWinsock();
     SOCKET s = createSocket(s);
     u_char *msg = malloc(MAXFRAGMENT * sizeof(u_char));
     ACCEPTED *accepted = NULL;
+    u_char *resp;
     char flag;
 
     struct sockaddr_in server;
@@ -437,7 +456,7 @@ void server(int port){                                                          
 
     while(1){
         memset(msg, 0, MAXFRAGMENT);
-        int recvb = 0, i = 0, j, state = 1;
+        int recvb = 0, i = 0, j, state = 1, prev = 0;
         accepted = malloc(sizeof(ACCEPTED));
         while(state) {
             j = 0;
@@ -469,10 +488,14 @@ void server(int port){                                                          
                 }
             }
             rsp:
-            if (sendto(s, addHeader("", i, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+            resp = response(accepted, prev, i);
+            printf("\nSending ACK\n");
+            if (sendto(s, resp, HEAD + i, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                 printf("Error: 'socket error'");
                 exit(EXIT_FAILURE);
             }
+            free(resp);
+            prev = i;
         }
         reconstructMessage(accepted, i);
         myFree2(accepted, i);
@@ -558,14 +581,13 @@ void client(char *ip, int port){
                 if(p[i - 1].payload[8] == 'L')
                     break;
             }
-            //memset(msg, 0, strlen(msg));
             timeoutClient(s, 1);
             if (recv(s, msg, MAXFRAGMENT, 0) == SOCKET_ERROR) {
                 printf("Error: 'Socket error'");
                 exit(EXIT_FAILURE);
             }
-            printf("\n%d: ", toInt(msg, 0));
-            handleFlag(msg[8]);
+            printf("\nServer response: ");
+            print(i, msg, (int)(toShort(msg, 6) + HEAD));
             recvb = toShort(msg, 6) + HEAD;
             memset(msg, 0, recvb);
             memset(filename, 0, strlen(filename));
