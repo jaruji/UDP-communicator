@@ -437,41 +437,42 @@ void server(int port){                                                          
 
     while(1){
         memset(msg, 0, MAXFRAGMENT);
-        int recvb = 0, i = 0, state = 1;
+        int recvb = 0, i = 0, j, state = 1;
         accepted = malloc(sizeof(ACCEPTED));
         while(state) {
-            accepted = realloc(accepted, (i + 1) * sizeof(ACCEPTED));
-            accepted[i].payload = calloc(MAXFRAGMENT, sizeof(u_char));
-            timeoutServer(s);
-            if(recvfrom(s, accepted[i].payload, MAXFRAGMENT, 0, (struct sockaddr *) &client, &len) == SOCKET_ERROR) {
-                printf("Error: 'Socket error'");
-                exit(EXIT_FAILURE);
+            j = 0;
+            while(j++ < LIMIT) {
+                accepted = realloc(accepted, (i + 1) * sizeof(ACCEPTED));
+                accepted[i].payload = calloc(MAXFRAGMENT, sizeof(u_char));
+                timeoutServer(s);
+                if (recvfrom(s, accepted[i].payload, MAXFRAGMENT, 0, (struct sockaddr *) &client, &len) == SOCKET_ERROR) {
+                    printf("Error: 'Socket error'");
+                    exit(EXIT_FAILURE);
+                }
+                recvb = toShort(accepted[i].payload, 6) + HEAD;     //size of received fragment equals window size + header size
+                accepted[i].payload = realloc(accepted[i].payload, recvb * sizeof(u_char));
+                accepted[i].seq = toInt(accepted[i].payload, 0);
+                accepted[i].len = recvb;
+                print(accepted[i].seq, accepted[i].payload, accepted[i].len);
+                switch (handleFlag(accepted[i++].payload[8])) {
+                    case 1:                                               //end of file/message transfer
+                        state = 0;
+                        goto rsp;
+                    case 2:                                               //end of communication
+                        if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+                            printf("Error: 'socket error'");
+                            exit(EXIT_FAILURE);
+                        }
+                        free(msg);
+                        closeSocket(s);
+                        return;
+                }
             }
-            recvb = toShort(accepted[i].payload, 6) + HEAD;     //size of received fragment equals window size + header size
-            accepted[i].payload = realloc(accepted[i].payload, recvb * sizeof(u_char));
-            accepted[i].seq = toInt(accepted[i].payload, 0);
-            accepted[i].len = recvb;
-            print(accepted[i].seq, accepted[i].payload, accepted[i].len);
-            switch(handleFlag(accepted[i].payload[8])){
-                case 1:                                               //end of file/message transfer
-                    state = 0;
-                    break;
-                case 2:                                               //end of communication
-                    print(1, msg, HEAD);
-                    if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
-                        printf("Error: 'socket error'");
-                        exit(EXIT_FAILURE);
-                    }
-                    free(msg);
-                    closeSocket(s);
-                    return;
-            }
-            memset(msg, 0, recvb);
-            if (sendto(s, addHeader("", i + 1, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+            rsp:
+            if (sendto(s, addHeader("", i, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                 printf("Error: 'socket error'");
                 exit(EXIT_FAILURE);
             }
-            i++;
         }
         reconstructMessage(accepted, i);
         myFree2(accepted, i);
@@ -547,11 +548,17 @@ void client(char *ip, int port){
         //##################################
         int i = 0, j, recvb;
         while(i < fragmentCount) {
-            if (sendto(s, p[i].payload, p[i].len, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
-                printf("Error: 'socket error'");
-                exit(EXIT_FAILURE);
+            j = 0;
+            while(j++ < LIMIT){
+                if (sendto(s, p[i].payload, p[i].len, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
+                    printf("Error: 'socket error'");
+                    exit(EXIT_FAILURE);
+                }
+                i++;
+                if(p[i - 1].payload[8] == 'L')
+                    break;
             }
-            memset(msg, 0, strlen(msg));
+            //memset(msg, 0, strlen(msg));
             timeoutClient(s, 1);
             if (recv(s, msg, MAXFRAGMENT, 0) == SOCKET_ERROR) {
                 printf("Error: 'Socket error'");
@@ -560,11 +567,8 @@ void client(char *ip, int port){
             printf("\n%d: ", toInt(msg, 0));
             handleFlag(msg[8]);
             recvb = toShort(msg, 6) + HEAD;
-            //printf("\nServer response: ");
-            //print(i + 1, msg, recvb);
             memset(msg, 0, recvb);
             memset(filename, 0, strlen(filename));
-            i++;
         }
     }
     free(msg);
