@@ -21,8 +21,9 @@ typedef struct fragment{
 
 
 typedef struct acceptedFragment{
+    int seq;
     u_char *payload;
-    int number;
+    short len;
 }ACCEPTED;
 
 
@@ -192,6 +193,7 @@ short checksum(u_char *fragment, int len){                                      
 
 FRAGMENT *fragment(char *msg){                                                                      //fragmenting the message
     int i, j, curr = 0;
+    char flag = 'M';
     fragmentCount = count(strlen(msg));
     FRAGMENT *str = malloc(fragmentCount * sizeof(FRAGMENT));
     for(i = 0; i < fragmentCount; i++){
@@ -205,10 +207,12 @@ FRAGMENT *fragment(char *msg){                                                  
         printf("\nFRAGMENT %d: %s", i+1, str[i].payload);
     }
     u_char *tmp;
-    for(i = 0; i < fragmentCount; i++){ //the fuck is wrong here?
+    for(i = 0; i < fragmentCount; i++){
         tmp = str[i].payload;
         str[i].len = HEAD + strlen(str[i].payload);
-        str[i].payload = addHeader(str[i].payload, i + 1, checksum(str[i].payload, str[i].len), 'M', fragmentSize);
+        if(i == fragmentCount - 1)
+            flag = 'L';
+        str[i].payload = addHeader(str[i].payload, i + 1, checksum(str[i].payload, str[i].len), flag, fragmentSize);
         free(tmp);
         print(i + 1, str[i].payload, str[i].len);
     }
@@ -259,19 +263,19 @@ int handleFlag(char flag){
     switch(flag){
         case('S'):
             printf("Recieved SYN\n");
-            return 1;
+            return 0;
         case('K'):
             printf("\nRecieved KEEPALIVE\n");
-            return 1;
+            return 0;
         case('A'):
             printf("\nReceived ACK\n");
-            return 1;
+            return 0;
         case('L'):
             printf("\nLast fragment recevied\n");
             return 1;
         case('E'):
             printf("\nExiting communication\n");
-            return 0;
+            return 2;
     }
 }
 
@@ -353,10 +357,33 @@ void requestFragments(int *missing){
 }
 
 
+int toInt(u_char *data, int index){
+    return data[index] * pow(256, 3) + data[index + 1] * pow(256,2) + data[index + 2] * 256 + data[index + 3];
+}
+
+
+short toShort(u_char *data, int index){
+    return data[index] * 256 + data[index + 1];
+}
+
+
+int comp (const void * a, const void * b)
+{
+    ACCEPTED *x = (ACCEPTED*) a;
+    ACCEPTED *y = (ACCEPTED*) b;
+    return x->seq - y->seq;
+}
+
+char* orderFragments(int len, ACCEPTED *acceptedFragments){
+    int i;
+    qsort(acceptedFragments, len, sizeof(ACCEPTED), comp);
+}
+
+
 void server(int port){                                                                                //server side code, listening on specified port number until connection is established
     initializeWinsock();
     SOCKET s = createSocket(s);
-    char *msg = malloc(BUFFLEN * sizeof(char));
+    u_char *msg = malloc(MAXFRAGMENT * sizeof(u_char));
 
     struct sockaddr_in server;
     server.sin_family = AF_INET;
@@ -376,29 +403,39 @@ void server(int port){                                                          
     handshakeServer(s, server, client);                                                                   //server waits for SYN, responds with ACK
 
     while(1){
-        memset(msg, 0, strlen(msg));
-        fflush(stdin);
-        timeoutServer(s);
-        if(recvfrom(s, msg, BUFFLEN,0, (struct sockaddr *) &client, &len) == SOCKET_ERROR){
-            printf("Error: 'Socket error'");
-            exit(EXIT_FAILURE);
-        }
-        printf("%s\n", msg);
-        if(!handleFlag(msg[8])) {                //If client initiated end of communication
-            print(1, msg, HEAD);
-            if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+        memset(msg, 0, MAXFRAGMENT);
+        //fflush(stdin);
+        int recvb = 0, i = 1, state = 1;
+        while(state) {
+            timeoutServer(s);
+            if(recvfrom(s, msg, MAXFRAGMENT, 0, (struct sockaddr *) &client, &len) == SOCKET_ERROR) {
+                printf("Error: 'Socket error'");
+                exit(EXIT_FAILURE);
+            }
+            recvb = toShort(msg, 6) + HEAD;                     //size of received fragment equals window size + header size
+            print(i, msg, recvb);
+            switch(handleFlag(msg[8])){
+                case 2:
+                    print(1, msg, HEAD);
+                    if (sendto(s, addHeader("", 2, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+                        printf("Error: 'socket error'");
+                        exit(EXIT_FAILURE);
+                    }
+                    free(msg);
+                    closeSocket(s);
+                    return;
+                case 1:
+                    state = 0;
+                    break;
+            }
+            memset(msg, 0, recvb);
+            if (sendto(s, addHeader("", i, 0, 'A', 0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                 printf("Error: 'socket error'");
                 exit(EXIT_FAILURE);
             }
-            break;
-        }
-        if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
-            printf("Error: 'socket error'");
-            exit(EXIT_FAILURE);
+            i++;
         }
     }
-    free(msg);
-    closeSocket(s);
 }
 
 
@@ -468,23 +505,25 @@ void client(char *ip, int port){
         //##################################
         p = fragment(msg);
         //##################################
-        if(sendto(s, msg, strlen(msg), 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
-            printf("Error: 'socket error'");
-            exit(EXIT_FAILURE);
+        int i = 0, recvb;
+        while(i < fragmentCount) {
+            if (sendto(s, p[i].payload, p[i].len, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
+                printf("Error: 'socket error'");
+                exit(EXIT_FAILURE);
+            }
+            memset(msg, 0, strlen(msg));
+            timeoutClient(s, 1);
+            if (recv(s, msg, BUFFLEN, 0) == SOCKET_ERROR) {
+                printf("Error: 'Socket error'");
+                exit(EXIT_FAILURE);
+            }
+            recvb = toShort(msg, 6) + HEAD;
+            printf("\nServer response: ");
+            print(i + 1, msg, recvb);
+            memset(msg, 0, recvb);
+            memset(filename, 0, strlen(filename));
+            i++;
         }
-        memset(msg, 0, strlen(msg));
-        timeoutClient(s, 1);
-        if(recv(s, msg, BUFFLEN,0) == SOCKET_ERROR){
-            printf("Error: 'Socket error'");
-            exit(EXIT_FAILURE);
-        }
-        printf("\nServer response: %s", msg);
-        printf("\nWE GOT HERE 1\n");
-        memset(msg, 0, strlen(msg));
-        printf("\nWE GOT HERE 2\n");
-        memset(filename, 0, strlen(filename));
-        printf("\nWE GOT HERE 3\n");
-        printf("\nWE GOT HERE 4\n");
     }
     free(msg);
     free(filename);
