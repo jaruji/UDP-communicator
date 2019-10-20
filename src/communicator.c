@@ -425,7 +425,18 @@ u_char *response(ACCEPTED *str, int prev, int len){
     for(i = prev; i < len; i++){
         msg[j++] = convertFlag(str[i].payload[8]);
     }
-    return addHeader(msg, 0, 0, 'R', len - prev);
+    return addHeader(msg, prev, 0, 'R', len - prev);
+}
+
+
+void printACK(u_char *msg, int len){
+    int i, start = toInt(msg, 0);
+    for(i = HEAD; i < len; i++){
+       if((int)msg[i] == 48)
+           printf("\n%.2x %d. Fragment - ACK", msg[i],start + i - HEAD + 1);
+       else
+           printf("\n%.2x %d. Fragment - NACK", msg[i],start + i - HEAD + 1);
+    }
 }
 
 
@@ -490,7 +501,7 @@ void server(int port){                                                          
             rsp:
             resp = response(accepted, prev, i);
             printf("\nSending ACK\n");
-            if (sendto(s, resp, HEAD + i, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+            if (sendto(s, resp, HEAD + i - prev, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                 printf("Error: 'socket error'");
                 exit(EXIT_FAILURE);
             }
@@ -587,8 +598,9 @@ void client(char *ip, int port){
                 exit(EXIT_FAILURE);
             }
             printf("\nServer response: ");
-            print(i, msg, (int)(toShort(msg, 6) + HEAD));
             recvb = toShort(msg, 6) + HEAD;
+            print(i, msg, recvb);
+            printACK(msg, recvb);
             memset(msg, 0, recvb);
             memset(filename, 0, strlen(filename));
         }
