@@ -22,8 +22,8 @@ typedef struct fragment{
 
 typedef struct acceptedFragment{
     int seq;
-    u_char *payload;
     short len;
+    u_char *payload;
 }ACCEPTED;
 
 
@@ -32,6 +32,8 @@ typedef struct acceptedFragment{
 int fragmentCount;                  //number of fragments
 int fragmentSize = DEFAULTSIZE;     //maximum size of one fragment
 int polynome = 0xd175;             //generator polynome for CRC-16
+char *filename;                    //name of file you want to send
+int fileSize;                      //size of file you want to send, in bytes
 //######################################################################################
 
 
@@ -195,8 +197,7 @@ int verify(u_char *fragment, short checksum){
 
 
 FRAGMENT *fragment(u_char *msg, int len, char flag){                                                                      //fragmenting the message
-    printf("\nFRAGMENTING BEGINS");
-    int i, j, curr = 0;
+    int i;
     fragmentCount = count(len);
     printf("\nTEST 0");
     FRAGMENT *str = (FRAGMENT*)malloc(fragmentCount * sizeof(FRAGMENT));
@@ -204,15 +205,7 @@ FRAGMENT *fragment(u_char *msg, int len, char flag){                            
     for(i = 0; i < fragmentCount; i++){
         str[i].payload = (u_char*)calloc(fragmentSize, sizeof(u_char));
     }
-    printf("\nTEST 2");/*
-    for(i = 0; i < fragmentCount; i++){
-        for(j = 0; j < fragmentSize; j++){
-            str[i].payload[j] = msg[curr++];
-        }
-        str[i].payload[j] = '\0';
-        //printf("\nFRAGMENT %d: %s", i+1, str[i].payload);
-    }*/
-    //u_char *tmp;
+    printf("\nTEST 2");
     printf("\nTEST 3");
     for(i = 0; i < fragmentCount; i++){
         //tmp = str[i].payload;
@@ -224,7 +217,7 @@ FRAGMENT *fragment(u_char *msg, int len, char flag){                            
         }
         str[i].payload = addHeader(msg + i * fragmentSize, i + 1, 1000, flag, str[i].len - HEAD);
         //free(tmp);
-        print(i + 1, str[i].payload, str[i].len);
+        //print(i + 1, str[i].payload, str[i].len);
     }
     printf("\nTEST 4");
     return str;
@@ -233,7 +226,7 @@ FRAGMENT *fragment(u_char *msg, int len, char flag){                            
 
 char *decodeMessage(u_char *pkt_data, int len){                 //extracts the data segment from fragment
     int i, j = 0;
-    char *message = malloc((len - HEAD) * sizeof(char));
+    char *message = malloc((len - HEAD + 1) * sizeof(char));
     for(i = HEAD; i < len; i++){
         message[j++] = pkt_data[i];
     }
@@ -287,10 +280,10 @@ int handleFlag(char flag){
     //TODO - chooses course of action depending on the flag of recieved packet
     switch(flag){
         case('S'):
-            printf("Recieved SYN\n");
+            printf("Received SYN\n");
             return 0;
         case('K'):
-            printf("\nRecieved KEEPALIVE\n");
+            printf("\nReceived KEEPALIVE\n");
             return 0;
         case('A'):
             printf("ACK\n");
@@ -304,6 +297,9 @@ int handleFlag(char flag){
         case('E'):
             printf("\nExiting communication\n");
             return 2;
+        case('I'):
+            printf("Received init packet\n");
+            return 0;
     }
 }
 
@@ -350,9 +346,10 @@ void handshakeServer(SOCKET s, struct sockaddr_in server, struct sockaddr_in cli
 }
 
 
-void handshakeClientFile(SOCKET s, struct sockaddr_in server, char *filename, int len){
-    char msg[HEAD];
-    if(sendto(s, addHeader(filename, len, 0, 'F', strlen(filename)), HEAD, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR) {
+void sendInit(SOCKET s, struct sockaddr_in server, char flag){
+    //u_char *msg = malloc(HEAD * sizeof(u_char));
+    u_char msg[100];
+    if(sendto(s, addHeader("", fragmentCount, 0, flag, fragmentSize), HEAD, 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR){
         printf("Error: 'socket error'");
         exit(EXIT_FAILURE);
     }
@@ -361,23 +358,64 @@ void handshakeClientFile(SOCKET s, struct sockaddr_in server, char *filename, in
         printf("Error: 'Socket error'");
         exit(EXIT_FAILURE);
     }
+    print(1, msg, HEAD);
+    handleFlag(msg[8]);
+    if(flag == 'F'){
+        if(sendto(s, addHeader(filename, fileSize, 0, flag, strlen(filename)), HEAD + strlen(filename), 0, (struct sockaddr *) &server, sizeof(server)) == SOCKET_ERROR){
+            printf("Error: 'socket error'");
+            exit(EXIT_FAILURE);
+        }
+        memset(msg, 0, 100);
+        timeoutClient(s, 1);
+        if(recv(s, msg, HEAD,0) == SOCKET_ERROR){
+            printf("Error: 'Socket error'");
+            exit(EXIT_FAILURE);
+        }
+        handleFlag(msg[8]);
+    }
+    //free(msg);
 }
 
 
-char *handshakeServerFile(SOCKET s, struct sockaddr_in server, struct sockaddr_in client, int *ret){
-    int size = NAMESIZE + HEAD;
+char receiveInit(SOCKET s, struct sockaddr_in server, struct sockaddr_in client){
+    //u_char *msg = malloc(HEAD * sizeof(u_char));
+    u_char msg[100];
+    char flag;
     int len = sizeof(client);
-    char *msg = malloc(size * sizeof(char));
-    if(recvfrom(s, msg, size,0, (struct sockaddr *) &client, &len) == SOCKET_ERROR){
+    char *tmp = addHeader("", 0, 0, 'A', 0);
+    timeoutServer(s);
+    if(recvfrom(s, msg, HEAD,0, (struct sockaddr *) &client, &len) == SOCKET_ERROR){
         printf("Error: 'Socket error'");
         exit(EXIT_FAILURE);
     }
-    *ret = toInt(msg, 0);
-    if(sendto(s, addHeader("",0,0,'A',0), HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+    fragmentCount = toInt(msg, 0);
+    fragmentSize = (int)toShort(msg, 6);
+    flag = msg[8];
+    print(1, msg, HEAD);
+    printf("\nSending ACK\n");
+    if(sendto(s, tmp, HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
         printf("Error: 'socket error'");
         exit(EXIT_FAILURE);
     }
-    return decodeMessage(msg, (int)(toShort(msg, 6) + HEAD));
+    if(flag == 'F'){
+        memset(msg, 0, 100);
+        //realloc(msg, (HEAD + NAMESIZE) * sizeof(u_char));
+        timeoutServer(s);
+        if(recvfrom(s, msg, HEAD + NAMESIZE,0,(struct sockaddr *) &client, &len) == SOCKET_ERROR){
+            printf("Error: 'Socket error'");
+            exit(EXIT_FAILURE);
+        }
+        filename = decodeMessage(msg, HEAD + toShort(msg, 6));
+        fileSize = toInt(msg, 0);
+        //printf("\nFILENAME %s", filename);
+        //printf("\nFILESIZE %d", fileSize);
+        if(sendto(s, tmp, HEAD, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
+            printf("Error: 'socket error'");
+            exit(EXIT_FAILURE);
+        }
+    }
+    //free(msg);
+    return flag;
 }
 
 
@@ -397,22 +435,34 @@ void end(SOCKET s, struct sockaddr_in server){
 }
 
 
-void *keepAlive(void *vargp){
+void *keepAlive(){
     while(1) {
         Sleep(10000);
-        printf("K den");
+        printf("\nK den");
     }
 }
 
 
-int checkPacket(u_char *fragment){
+char *checkPacket(ACCEPTED a){
     //TODO - check checksum value, return 0 if faulty, else 1
-
+    //checksum(a, a.len);
 }
 
 
 void requestFragments(int *missing){
     //TODO - if fragments arrive faulty, server sends a request for them to be resent
+}
+
+
+void resendFragments(){
+
+}
+
+
+FRAGMENT generateError(FRAGMENT a){
+   short checksum = toShort(a.payload, 4);
+   append(4, a.payload, checksum + 1, sizeof(checksum));
+   return a;
 }
 
 
@@ -434,7 +484,7 @@ void reconstructMessage(ACCEPTED *str, int len){
     char *msg = malloc(BUFFLEN * sizeof(char));
     int i;
     for(i = 0; i < len; i++) {
-        strcat(msg, decodeMessage(str[i].payload, str[i].len)); //str[i].len?
+        strcat(msg, decodeMessage(str[i].payload, str[i].len));
     }
     printf("\nFinal message: %s\n", msg);
     free(msg);
@@ -469,6 +519,7 @@ void printACK(u_char *msg, int len){
     }
 }
 
+
 ACCEPTED setAccepted(ACCEPTED a, int recvb){
     a.payload = realloc(a.payload, recvb * sizeof(u_char));
     a.seq = toInt(a.payload, 0);
@@ -482,7 +533,7 @@ void server(int port){                                                          
     initializeWinsock();
     SOCKET s = createSocket(s);
     u_char *msg = malloc(MAXFRAGMENT * sizeof(u_char));
-    ACCEPTED *accepted = NULL;
+    ACCEPTED *accepted;
     u_char *resp;
 
     struct sockaddr_in server;
@@ -502,20 +553,29 @@ void server(int port){                                                          
 
     handshakeServer(s, server, client);                                                                   //server waits for SYN, responds with ACK - connection is established
     int recvb, i, j, prev, state;
+    char flag;
     while(1){
         memset(msg, 0, MAXFRAGMENT);
         i = 0;                              //number of fragments received
         prev = 0;                           //last fragment sequence confirmed
         state = 1;                          //decides if specific message is currently being sent or not
         accepted = (ACCEPTED*)malloc(sizeof(ACCEPTED));
-        while(state) {
+        flag = receiveInit(s, server, client);
+        while(state){
             j = 0;
             while(j++ < LIMIT) {
                 accepted = realloc(accepted, (i + 1) * sizeof(ACCEPTED));
-                accepted[i].payload = (u_char*)calloc(MAXFRAGMENT + HEAD, sizeof(u_char));
+                printf("\n JOE WAS HERE\n");
+                //accepted[i].len = 5;
+                printf("\nMIKE: %d\n", accepted[i].len);
+                accepted[i].payload = calloc((MAXFRAGMENT + HEAD), sizeof(u_char));
+                printf("\nPRISIEL SEM JOE\n");
+                strcpy(accepted[i].payload,"kulecko");
+                printf("\nTU SOM FRAJER %s\n", accepted[i].payload);
                 timeoutServer(s);
-                if ((recvb = recvfrom(s, accepted[i].payload, MAXFRAGMENT + HEAD, 0, (struct sockaddr *) &client, &len)) == SOCKET_ERROR) {
-                    printf("Error: 'Socket error'");
+                if ((recvb = recvfrom(s, accepted[i].payload, MAXFRAGMENT + HEAD, 0, (struct sockaddr *) &client, &len)) == SOCKET_ERROR){
+                    printf("JOError: 'Socket error'");
+                    printf("\n%d", WSAGetLastError());
                     exit(EXIT_FAILURE);
                 }
                 printf("\nReceived %d B", recvb);
@@ -537,7 +597,7 @@ void server(int port){                                                          
             }
             rsp:
             resp = response(accepted, prev, i);
-            printf("\nSending ACK\n");
+            //printf("\nSending ACK\n");
             if (sendto(s, resp, HEAD + i - prev, 0, (struct sockaddr *) &client, sizeof(client)) == SOCKET_ERROR) {
                 printf("Error: 'socket error'");
                 exit(EXIT_FAILURE);
@@ -545,8 +605,13 @@ void server(int port){                                                          
             free(resp);
             prev = i;
         }
+        printf("Accepted %d/%d fragments", i, fragmentCount);
+        printf("\nMax fragment size was %d", fragmentSize);
         reconstructMessage(accepted, i);
-        printf("Accepted %d fragments", i);
+        if(flag == 'F'){
+            printf("\nFilename: %s", filename);
+            printf("\nFile size %d", fileSize);
+        }
         if(accepted != NULL){
             int count = i;
             for(i = 0; i < count; i++){
@@ -566,8 +631,9 @@ void client(char *ip, int port){
     //pthread_t tID;                                                                              //Posix thread for keepalive prob.
     FRAGMENT *p = NULL;
     u_char *msg = malloc(BUFFLEN * sizeof(u_char));
-    char *filename = malloc(NAMESIZE * sizeof(char));
+    filename = malloc(NAMESIZE * sizeof(char));
     int len, k;
+    char flag = 'M';
 
     struct sockaddr_in server;                                                                   //server sockaddr(for client connection to specified host)
     server.sin_family = AF_INET;
@@ -625,6 +691,8 @@ void client(char *ip, int port){
             printf("Sending file : %s\n", filename);
             printf("Full path: \n");
             msg = openFile(filename, &len);
+            fileSize = len;
+            flag = 'F';
         }
         else if(strcmp(msg, ":error") == 0){
             printf("Error msg will be simulated here\n");
@@ -634,10 +702,12 @@ void client(char *ip, int port){
             continue;
         }//prompt - also contains file!
         //##################################
-        p = fragment(msg, len, 'M');
-        memset(msg, 0, len);        //toto moze byt blbost pri subore!
+        //pthread_cancel(tID);
+        p = fragment(msg, len, flag);
+        memset(msg, 0, len);                                                        //toto moze byt blbost pri subore!
         //##################################
         int i = 0, j, recvb;
+        sendInit(s, server, flag);
         while(i < fragmentCount){
             j = 0;
             while(j++ < LIMIT){
